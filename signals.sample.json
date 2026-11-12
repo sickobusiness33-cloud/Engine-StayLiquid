@@ -1,0 +1,5 @@
+[
+  { "id": "sig-001", "at": 1794400000000, "symbol": "BTC/USDT", "side": "buy",  "action": "open",  "price": 71000 },
+  { "id": "sig-002", "at": 1794403600000, "symbol": "BTC/USDT", "side": "sell", "action": "close", "price": 72200 },
+  { "id": "sig-003", "at": 1794407200000, "symbol": "BTC/USDT", "side": "sell", "action": "open",  "price": 72100 }
+]
