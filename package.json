@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "StayLiquid — motor de ejecucion automatica (Fase 1: vault + adaptador exchange + ejecutor en modo paper)",
+  "description": "StayLiquid — motor de ejecucion automatica (Fase 1)",
   "engines": { "node": ">=20" },
   "scripts": {
-    "start": "node src/engine.js",
+    "start": "node engine.js",
     "keygen": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
-    "test:vault": "node src/vault.js --selftest"
+    "test:vault": "node vault.js --selftest"
   },
   "dependencies": {
     "ccxt": "^4.4.0"
