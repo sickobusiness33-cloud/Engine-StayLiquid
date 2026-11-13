@@ -55,6 +55,7 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
       const strategyOn = (process.env.STRATEGY || '').toLowerCase() === 'on' || (process.env.SIGNALS_URL || '') === 'strategy';
       return send(res, 200, {
         ok: true,
+        backend: store.backend,
         mode: (process.env.EXEC_MODE || 'paper').toLowerCase(),
         strategy: strategyOn ? {
           active: true,
