@@ -56,4 +56,16 @@ export const store = {
     if (USE_SB) await orderInsert(entry);
     else { ensure(); fs.appendFileSync(p('orders.log'), JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n'); }
   },
+  // Diagnóstico: escribe y lee una fila de prueba y devuelve el error real si falla.
+  async selfTest() {
+    if (!USE_SB) return { backend: 'files' };
+    try {
+      const w = await fetch(`${SB_URL}/rest/v1/engine_kv`, { method: 'POST', headers: sbHeaders({ prefer: 'resolution=merge-duplicates,return=minimal' }), body: JSON.stringify([{ k: '__selftest', v: { t: Date.now() }, updated_at: new Date().toISOString() }]) });
+      const writeErr = w.ok ? '' : (await w.text()).slice(0, 300);
+      const r = await fetch(`${SB_URL}/rest/v1/engine_kv?k=eq.__selftest&select=v`, { headers: sbHeaders() });
+      const rows = r.ok ? await r.json() : [];
+      const readErr = r.ok ? '' : (await r.text()).slice(0, 300);
+      return { backend: 'supabase', url: SB_URL, keyPrefix: SB_KEY.slice(0, 11), writeStatus: w.status, writeErr, readStatus: r.status, readErr, readBack: rows.length ? rows[0].v : null };
+    } catch (e) { return { backend: 'supabase', error: String(e.message || e) }; }
+  },
 };

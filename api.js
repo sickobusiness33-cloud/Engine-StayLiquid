@@ -51,6 +51,7 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
 
     // Salud pública (sin claves ni datos de clientes): para ver que el motor sigue al bot en vivo.
     if (req.method === 'GET' && url.pathname === '/api/bot/health') {
+      if (url.searchParams.get('test') === '1') { return send(res, 200, await store.selfTest()); }
       let st = null; try { st = await store.strategyState(); } catch (e) {}
       const strategyOn = (process.env.STRATEGY || '').toLowerCase() === 'on' || (process.env.SIGNALS_URL || '') === 'strategy';
       return send(res, 200, {
