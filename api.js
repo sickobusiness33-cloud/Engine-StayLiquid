@@ -51,7 +51,7 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
 
     // Salud pública (sin claves ni datos de clientes): para ver que el motor sigue al bot en vivo.
     if (req.method === 'GET' && url.pathname === '/api/bot/health') {
-      let st = null; try { st = store.strategyState(); } catch (e) {}
+      let st = null; try { st = await store.strategyState(); } catch (e) {}
       const strategyOn = (process.env.STRATEGY || '').toLowerCase() === 'on' || (process.env.SIGNALS_URL || '') === 'strategy';
       return send(res, 200, {
         ok: true,
@@ -63,15 +63,15 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
           openPositions: st && st.open ? st.open.length : 0,
           lastBar: st && st.lastBarT ? new Date(st.lastBarT * 1000).toISOString() : null,
         } : { active: false },
-        clients: store.clients().length,
+        clients: (await store.clients()).length,
       });
     }
     if (req.method === 'GET' && url.pathname === '/api/bot/status') {
       if (!auth(req)) return send(res, 401, { error: 'no autorizado' });
       const uid = url.searchParams.get('uid');
-      const c = store.clients().find(x => x.uid === uid);
+      const c = (await store.clients()).find(x => x.uid === uid);
       if (!c) return send(res, 404, { error: 'no conectado' });
-      const pos = (store.state().positions[uid] || []);
+      const pos = ((await store.state()).positions[uid] || []);
       return send(res, 200, { connected: true, active: !!c.active, exchange: c.exchange, cfg: c.cfg, openPositions: pos.length }); // sin claves
     }
 
@@ -80,7 +80,7 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
       const body = await readBody(req);
       const uid = String(body.uid || '').trim();
       if (!/^[A-Za-z0-9_-]{6,64}$/.test(uid)) return send(res, 400, { error: 'uid no valido' });
-      const clients = store.clients();
+      const clients = await store.clients();
       const idx = clients.findIndex(x => x.uid === uid);
 
       if (url.pathname === '/api/bot/connect') {
@@ -97,7 +97,7 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
         const creds = encryptSecret(JSON.stringify({ apiKey: body.apiKey, apiSecret: body.apiSecret, password: body.password || undefined }));
         const rec = { uid, exchange: body.exchange, active: true, creds, cfg: { ...body.cfg, active: true } };
         if (idx >= 0) clients[idx] = rec; else clients.push(rec);
-        store.saveClients(clients);
+        await store.saveClients(clients);
         return send(res, 200, { ok: true, connected: true });
       }
 
@@ -106,14 +106,14 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
         if (!validCfg(body.cfg)) return send(res, 400, { error: 'configuracion no valida' });
         clients[idx].cfg = { ...clients[idx].cfg, ...body.cfg };
         if (typeof body.active === 'boolean') { clients[idx].active = body.active; clients[idx].cfg.active = body.active; }
-        store.saveClients(clients);
+        await store.saveClients(clients);
         return send(res, 200, { ok: true, cfg: clients[idx].cfg, active: clients[idx].active });
       }
 
       if (url.pathname === '/api/bot/disconnect') {
         if (idx < 0) return send(res, 200, { ok: true });
-        clients.splice(idx, 1); store.saveClients(clients);               // borra credenciales
-        const st = store.state(); delete st.positions[uid]; store.saveState(st);
+        clients.splice(idx, 1); await store.saveClients(clients);               // borra credenciales
+        const st = await store.state(); delete st.positions[uid]; await store.saveState(st);
         return send(res, 200, { ok: true, disconnected: true });
       }
     }

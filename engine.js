@@ -50,8 +50,8 @@ async function liveClient(c) {
 
 async function processSignal(sig) {
   lastPriceBySymbol[sig.symbol] = sig.price;
-  const clients = store.clients();
-  const st = store.state();
+  const clients = await store.clients();
+  const st = await store.state();
   for (const c of clients) {
     if (!c.active || c.cfg?.active === false) continue;
     const posList = (st.positions[c.uid] ||= []);
@@ -89,13 +89,13 @@ async function processSignal(sig) {
     }
   }
   st.lastSignalId = sig.id;
-  store.saveState(st);
+  await store.saveState(st);
 }
 
 // Reconciliación + trailing stop para todas las posiciones abiertas.
 async function reconcileAll() {
-  const clients = store.clients();
-  const st = store.state();
+  const clients = await store.clients();
+  const st = await store.state();
   let dirty = false;
   for (const c of clients) {
     const positions = st.positions[c.uid];
@@ -107,20 +107,20 @@ async function reconcileAll() {
     if (kept.length !== positions.length) dirty = true;
     st.positions[c.uid] = kept;
   }
-  if (dirty) store.saveState(st);
+  if (dirty) await store.saveState(st);
 }
 
 async function tick() {
   if (STRATEGY) {
     // El motor corre la estrategia del bot y emite señales -> los clientes copian en sync.
     const sm = await stratMod();
-    const { signals, state } = await sm.tick(store.strategyState());
-    store.saveStrategyState(state);
+    const { signals, state } = await sm.tick(await store.strategyState());
+    await store.saveStrategyState(state);
     for (const sig of signals) await processSignal(sig);
     return; // mirror puro: el cierre lo manda la estrategia, no un trailing independiente
   }
   const signals = await fetchSignals();
-  const st = store.state();
+  const st = await store.state();
   let start = 0;
   if (st.lastSignalId != null) { const i = signals.findIndex(s => s.id === st.lastSignalId); start = i >= 0 ? i + 1 : 0; }
   for (const sig of signals.slice(start)) await processSignal(sig);
