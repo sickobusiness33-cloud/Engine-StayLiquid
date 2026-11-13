@@ -57,6 +57,14 @@ export const store = {
     if (USE_SB) await orderInsert(entry);
     else { ensure(); fs.appendFileSync(p('orders.log'), JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n'); }
   },
+  // Ticket de soporte -> tabla support_tickets en Supabase (o archivo local).
+  async insertTicket(t) {
+    const row = { ...t, at: new Date().toISOString() };
+    if (USE_SB) {
+      try { const r = await fetch(`${SB_URL}/rest/v1/support_tickets`, { method: 'POST', headers: sbHeaders({ prefer: 'return=minimal' }), body: JSON.stringify([row]) }); return r.ok; } catch (e) { return false; }
+    }
+    try { ensure(); fs.appendFileSync(p('tickets.log'), JSON.stringify(row) + '\n'); return true; } catch (e) { return false; }
+  },
   // Diagnóstico: escribe y lee una fila de prueba y devuelve el error real si falla.
   async selfTest() {
     if (!USE_SB) return { backend: 'files' };

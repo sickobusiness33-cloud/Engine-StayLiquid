@@ -80,6 +80,17 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
     if (req.method === 'POST') {
       if (!auth(req)) return send(res, 401, { error: 'no autorizado' });
       const body = await readBody(req);
+
+      // Ticket de soporte (no lleva uid). El worker ya ha validado y puesto el token.
+      if (url.pathname === '/api/support/ticket') {
+        const email = String(body.email || '').slice(0, 160), message = String(body.message || '').slice(0, 4000);
+        const name = String(body.name || '').slice(0, 80);
+        let conversation = ''; try { conversation = JSON.stringify(body.conversation || []).slice(0, 10000); } catch (e) {}
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !message) return send(res, 400, { error: 'faltan email o mensaje' });
+        const ok = await store.insertTicket({ name, email, message, conversation, status: 'open' });
+        return send(res, ok ? 200 : 503, ok ? { ok: true } : { error: 'no se pudo guardar el ticket' });
+      }
+
       const uid = String(body.uid || '').trim();
       if (!/^[A-Za-z0-9_-]{6,64}$/.test(uid)) return send(res, 400, { error: 'uid no valido' });
       const clients = await store.clients();
