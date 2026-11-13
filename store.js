@@ -12,7 +12,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+// Acepta la URL base o la Data API URL (con /rest/v1): quitamos ese sufijo para no duplicarlo.
+const SB_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 const USE_SB = !!(SB_URL && SB_KEY);
 const DIR = process.env.DATA_DIR || './data';
