@@ -24,11 +24,11 @@ Ramas: `version-victor` (trabajo) y `main`. El dueño ordenó expresamente (2026
 - Un cierre que no llega ni a intentarse (clave rechazada, red) también marca `closePending` para reintentar; si no, la señal se consume y la posición queda huérfana.
 - No hacer depender un cierre de la consulta de saldo.
 - «Intención guardada antes de enviar» exige `store.saveStateStrict` (lanza si Supabase no confirma). `saveState` normal traga errores de red. `logOrder` nunca lanza (muchos llamantes no lo esperan).
+- Lecturas de `store`: solo «no existe» (fila vacía / ENOENT) devuelve el valor por defecto; cualquier fallo LANZA y no se sobrescribe nada (`state.json` corrupto = el motor se queda avisando, no borra posiciones). Los mensajes no citan contenido ni claves. `api.js` envuelve el handler: error de almacenamiento = 503, el servidor sigue vivo.
 - `reconcile`: `openPositions` devuelve `null` si no se puede saber; null ≠ «no hay posiciones» (antes borraba todas las posiciones ante un error o en spot).
 
 ## Pendiente conocido (no resuelto; salió de las revisiones de código, seguridad y fallos silenciosos)
 CRÍTICO/ALTO (fuera del alcance del cambio de cierre, a abordar pronto):
-- `store.js`: `kvGet`/`readJSON` devuelven el valor por defecto si la lectura falla; el siguiente `saveState` puede borrar todas las posiciones. Hay que lanzar en lectura, pero `api.js` no tiene `try/catch` global en su handler (un throw tumbaría el servidor): endurecer ambos a la vez. `saveStateStrict` ya existe y lo usa el cierre.
 - Un error `duplicate` del exchange se da por «cierre hecho» (decisión pedida por el dueño). Riesgo: un id consumido por una orden rechazada daría un falso «hecho». Falta confirmar con `fetchOrder`/posición real (específico de cada exchange; no se puede probar sin exchange real).
 - Stop `reduceOnly` huérfano (cancelación fallida tras cerrar, o `applyStopOrder` en `risk.js` que traga el error de cancelar y crea otro): solo se avisa por log; falta lista persistida y reintento.
 - Señales repetidas: si `lastSignalId` no está en el feed se reprocesa todo y un `close` sin `posId` podría cerrar una posición nueva del mismo símbolo. Exigir `posId` en `close` y guardar los ids ya procesados.

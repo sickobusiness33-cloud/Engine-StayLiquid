@@ -46,6 +46,16 @@ const validCfg = c => c && (c.mode === 'fixed' ? Number(c.amountUsd) > 0 : Numbe
 
 export function startApi(port = Number(process.env.PORT || process.env.API_PORT || 8787)) {
   const server = http.createServer(async (req, res) => {
+    // Red de seguridad: store.js ahora LANZA si no puede leer (en vez de devolver datos vacíos). Un error inesperado en un
+    // endpoint debe responder 503 y no dejar un rechazo sin capturar que tumbe el servidor.
+    try { await handle(req, res); }
+    catch (e) {
+      console.error('api error:', String((e && e.message) || e).slice(0, 200));
+      if (!res.headersSent) { try { send(res, 503, { error: 'almacenamiento no disponible, reintenta en unos segundos' }); } catch (_) { try { res.end(); } catch (__) {} } }
+      else { try { res.end(); } catch (_) {} }
+    }
+  });
+  async function handle(req, res) {
     if (req.method === 'OPTIONS') return send(res, 204, {});
     const url = new URL(req.url, 'http://x');
 
@@ -132,7 +142,7 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
     }
 
     return send(res, 404, { error: 'no encontrado' });
-  });
+  }
   server.listen(port, () => console.log('API del motor escuchando en :' + port));
   return server;
 }

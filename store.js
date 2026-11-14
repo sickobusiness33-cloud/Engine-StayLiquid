@@ -20,13 +20,17 @@ const DIR = process.env.DATA_DIR || './data';
 
 // ---------- Supabase REST (PostgREST) ----------
 const sbHeaders = extra => ({ apikey: SB_KEY, authorization: 'Bearer ' + SB_KEY, 'content-type': 'application/json', ...extra });
+// LECTURA: solo una fila que NO existe (lista vacía) devuelve el valor por defecto. Cualquier fallo (red, HTTP no-2xx,
+// JSON ilegible) LANZA: devolver el valor por defecto haría creer al motor que no hay clientes ni posiciones y el
+// siguiente saveState borraría el estado real. Los mensajes no incluyen URL, claves ni contenido de la respuesta.
 async function kvGet(key, def) {
-  try {
-    const r = await fetch(`${SB_URL}/rest/v1/engine_kv?k=eq.${encodeURIComponent(key)}&select=v`, { headers: sbHeaders() });
-    if (!r.ok) return def;
-    const rows = await r.json();
-    return rows.length && rows[0].v != null ? rows[0].v : def;
-  } catch (e) { return def; }
+  let r;
+  try { r = await fetch(`${SB_URL}/rest/v1/engine_kv?k=eq.${encodeURIComponent(key)}&select=v`, { headers: sbHeaders() }); }
+  catch (e) { throw new Error(`no se pudo leer '${key}' de Supabase (red)`); }
+  if (!r.ok) throw new Error(`no se pudo leer '${key}' de Supabase (HTTP ${r.status})`);
+  let rows;
+  try { rows = await r.json(); } catch (e) { throw new Error(`no se pudo leer '${key}' de Supabase (respuesta ilegible)`); }
+  return Array.isArray(rows) && rows.length && rows[0].v != null ? rows[0].v : def;
 }
 // strict=true: si Supabase no confirma la escritura (red o HTTP no-2xx) LANZA, para que quien necesite
 // la garantía «guardado antes de enviar la orden» (close.js) no envíe nada sin intención persistida.
@@ -45,7 +49,14 @@ async function orderInsert(entry) {
 // ---------- fallback a archivos JSON ----------
 const p = f => path.join(DIR, f);
 const ensure = () => fs.mkdirSync(DIR, { recursive: true });
-const readJSON = (f, def) => { try { return JSON.parse(fs.readFileSync(p(f), 'utf8')); } catch (e) { return def; } };
+// Archivo inexistente (primer arranque) -> valor por defecto. Archivo corrupto/ilegible -> LANZA (y no se toca):
+// el mensaje no cita el contenido (clients.json lleva credenciales cifradas).
+const readJSON = (f, def) => {
+  let txt;
+  try { txt = fs.readFileSync(p(f), 'utf8'); }
+  catch (e) { if (e && e.code === 'ENOENT') return def; throw new Error(`no se pudo leer ${f} (${(e && e.code) || 'error'})`); }
+  try { return JSON.parse(txt); } catch (e) { throw new Error(`${f} está corrupto (JSON inválido); no se sobrescribe, revisarlo a mano`); }
+};
 const writeJSON = (f, v) => { ensure(); fs.writeFileSync(p(f), JSON.stringify(v, null, 2)); };
 
 export const store = {
