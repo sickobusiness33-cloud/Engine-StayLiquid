@@ -12,6 +12,11 @@ Ramas: `version-victor` (trabajo) y `main`. El dueño ordenó expresamente (2026
 - Nunca poner secretos/claves en código, logs ni estado. No inventar cifras de rendimiento.
 - Commits y comentarios sin nombre de ningún modelo de IA. Commitear y subir a `origin/version-victor` cuando se pida.
 
+## Safety guard (barrera automática, `.claude/`)
+- `.claude/settings.json` + `.claude/hooks/safety-guard*.mjs`: hook PreToolUse que BLOQUEA (exit 2) empujar/fusionar en `main`/`master` (git y GitHub MCP), push forzado, `EXEC_MODE=live` (comando, archivos de config y variables de Railway), `reset --hard`, `checkout .`, `clean -f`, `rm -rf` peligroso, `--no-verify`, DROP, borrados/aceptaciones en Railway y claves privadas en archivos. Tests: `test/safety-guard.test.js`.
+- Excepción solo con orden EXPRESA del dueño: anteponer `SAFETY_GUARD_ALLOW=<regla>` al comando Bash (queda en `~/.claude/safety-guard.log`). Nunca usarla por iniciativa propia ni para saltarse un bloqueo «por otra vía».
+- Límite: es una barrera contra descuidos, no un sandbox. Se carga al arrancar la sesión (no actúa en la sesión donde se instaló).
+
 ## Arquitectura (lo esencial)
 - `engine.js` bucle: señales → `processSignal` (open/close/reduce) → `retryCloses`/`retryReduces` → `reconcileAll` (no en modo STRATEGY).
 - `partial.js` (corte parcial `reduce`) y `close.js` (cierre total) comparten el patrón: error del exchange nunca se traga, posición se mantiene hasta confirmar, reintento acotado (`RETRY` = 3 intentos / 2 min), `clientOrderId` determinista, intención guardada ANTES de enviar, duplicado = hecho.
