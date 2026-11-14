@@ -66,6 +66,9 @@ export const store = {
   async state() { return USE_SB ? await kvGet('state', { lastSignalId: null, positions: {} }) : readJSON('state.json', { lastSignalId: null, positions: {} }); },
   async saveState(s) { if (USE_SB) await kvSet('state', s); else writeJSON('state.json', s); },
   async saveStateStrict(s) { if (USE_SB) await kvSet('state', s, true); else writeJSON('state.json', s); },   // lanza si no se confirma la escritura
+  // Documentos sueltos por clave (Solana Copy Bot en simulación: 'solbot:users', 'solbot:paper:<uid>'). Lecturas: lanzan si fallan.
+  async kvGet(k, def) { return USE_SB ? await kvGet(k, def) : readJSON('kv-' + String(k).replace(/[^A-Za-z0-9_-]/g, '_') + '.json', def); },
+  async kvSet(k, v) { if (USE_SB) await kvSet(k, v, true); else writeJSON('kv-' + String(k).replace(/[^A-Za-z0-9_-]/g, '_') + '.json', v); },
   async strategyState() { return USE_SB ? await kvGet('strategy', null) : readJSON('strategy.json', null); },
   async saveStrategyState(s) { if (USE_SB) await kvSet('strategy', s); else writeJSON('strategy.json', s); },
   // Nunca lanza: muchos llamantes no esperan (await) este log y un fallo aquí tumbaría el proceso (rechazo no capturado).

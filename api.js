@@ -17,6 +17,7 @@
 import http from 'node:http';
 import { store } from './store.js';
 import { encryptSecret } from './vault.js';
+import { isAddr, normalizeCfg, freshPaper, summary, FEE_BPS, SLIP_BPS } from './solbot.js';
 // ccxt se carga de forma perezosa solo al conectar una clave real (el modo paper no lo necesita).
 
 const ALLOW_ORIGIN = process.env.CORS_ORIGIN || '*';
@@ -43,6 +44,16 @@ function readBody(req) {
 }
 
 const validCfg = c => c && (c.mode === 'fixed' ? Number(c.amountUsd) > 0 : Number(c.pct) > 0) && Number(c.maxExposureUsd) > 0;
+
+// Copy Bot de Solana (simulación): lecturas-modificaciones-escrituras de 'solbot:users' en serie para que dos peticiones no se pisen.
+let solLock = Promise.resolve();
+const withSolLock = fn => { const r = solLock.then(fn, fn); solLock = r.then(() => {}, () => {}); return r; };
+const isUid = u => /^[A-Za-z0-9_-]{6,64}$/.test(u);
+const solPublic = async (uid, u) => {
+  const paper = (await store.kvGet('solbot:paper:' + uid, null)) || freshPaper();
+  return { connected: true, mode: 'paper', active: !!u.active, wallet: u.wallet, cfg: u.cfg, since: u.since,
+    model: { feeBps: FEE_BPS, slippageBps: SLIP_BPS }, ...summary(paper) };
+};
 
 export function startApi(port = Number(process.env.PORT || process.env.API_PORT || 8787)) {
   const server = http.createServer(async (req, res) => {
@@ -87,9 +98,53 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
       return send(res, 200, { connected: true, active: !!c.active, exchange: c.exchange, cfg: c.cfg, openPositions: pos.length }); // sin claves
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/solbot/status') {
+      if (!auth(req)) return send(res, 401, { error: 'no autorizado' });
+      const uid = String(url.searchParams.get('uid') || '');
+      if (!isUid(uid)) return send(res, 400, { error: 'uid no valido' });
+      const u = (await store.kvGet('solbot:users', {}))[uid];
+      if (!u) return send(res, 404, { error: 'no conectado' });
+      return send(res, 200, await solPublic(uid, u));
+    }
+
     if (req.method === 'POST') {
       if (!auth(req)) return send(res, 401, { error: 'no autorizado' });
       const body = await readBody(req);
+
+      // Copy Bot de Solana (SIMULACIÓN, sin claves ni dinero real). El worker ya verificó el login y que la wallet es del usuario.
+      if (url.pathname.startsWith('/api/solbot/')) {
+        const uid = String(body.uid || '').trim();
+        if (!isUid(uid)) return send(res, 400, { error: 'uid no valido' });
+        return withSolLock(async () => {
+          const users = await store.kvGet('solbot:users', {});
+          const u = users[uid];
+          if (url.pathname === '/api/solbot/connect') {
+            if (!isAddr(body.wallet)) return send(res, 400, { error: 'wallet no valida' });
+            const taken = Object.entries(users).find(([k, v]) => k !== uid && v && v.wallet === body.wallet);
+            if (taken) return send(res, 409, { error: 'esa wallet ya esta conectada a otra cuenta' });
+            const now = Date.now();
+            users[uid] = { wallet: body.wallet, cfg: normalizeCfg(body.cfg), active: true, since: now, connectedAt: u ? u.connectedAt : now, updatedAt: now };
+            await store.kvSet('solbot:users', users);
+            if (!u || u.wallet !== body.wallet) await store.kvSet('solbot:paper:' + uid, freshPaper());   // otra wallet = cuenta virtual nueva
+            return send(res, 200, await solPublic(uid, users[uid]));
+          }
+          if (!u) return send(res, 404, { error: 'no conectado' });
+          if (url.pathname === '/api/solbot/config') {
+            if (body.cfg) u.cfg = normalizeCfg({ ...u.cfg, ...body.cfg });
+            if (typeof body.active === 'boolean') { if (body.active && !u.active) u.since = Date.now(); u.active = body.active; }   // al reanudar no se copia lo que pasó en pausa
+            u.updatedAt = Date.now();
+            await store.kvSet('solbot:users', users);
+            return send(res, 200, await solPublic(uid, u));
+          }
+          if (url.pathname === '/api/solbot/disconnect') {
+            delete users[uid];
+            await store.kvSet('solbot:users', users);
+            await store.kvSet('solbot:paper:' + uid, null);
+            return send(res, 200, { ok: true, disconnected: true });
+          }
+          return send(res, 404, { error: 'no encontrado' });
+        });
+      }
 
       // Ticket de soporte (no lleva uid). El worker ya ha validado y puesto el token.
       if (url.pathname === '/api/support/ticket') {

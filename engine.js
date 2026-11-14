@@ -20,6 +20,7 @@ import { reconcileClient } from './reconcile.js';
 import { executeReduce as executePartial, clampFrac, shouldRetry } from './partial.js';
 import { closePosition, shouldRetryClose, closeExhausted, markCloseFailed, safeErr } from './close.js';
 import { startApi } from './api.js';
+import { solbotTick, fetchPublicFeed } from './solbot.js';
 
 // --- mini cargador de .env (sin dependencias) ---
 try { for (const line of fs.readFileSync('.env', 'utf8').split('\n')) { const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i); if (m && !process.env[m[1]]) process.env[m[1]] = m[2]; } } catch (e) {}
@@ -238,6 +239,11 @@ async function main() {
   startApi();
   console.log(`StayLiquid Engine · modo=${MODE} · fuente=${SRC} · poll=${POLL}ms`);
   if (MODE === 'live') console.log('*** MODO LIVE: ordenes REALES. Valida en paper antes. ***');
-  for (;;) { await tick().catch(e => console.error('tick error', safeErr(e))); await new Promise(r => setTimeout(r, POLL)); }
+  for (;;) {
+    await tick().catch(e => console.error('tick error', safeErr(e)));
+    // Copy Bot de Solana en simulación: aislado, un fallo aquí nunca afecta al bot BTC (ni mueve dinero real).
+    await solbotTick({ store, fetchFeed: fetchPublicFeed }).catch(e => console.error('solbot error', safeErr(e)));
+    await new Promise(r => setTimeout(r, POLL));
+  }
 }
 main();
