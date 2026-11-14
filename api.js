@@ -102,7 +102,7 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
       if (!auth(req)) return send(res, 401, { error: 'no autorizado' });
       const uid = String(url.searchParams.get('uid') || '');
       if (!isUid(uid)) return send(res, 400, { error: 'uid no valido' });
-      const u = (await store.kvGet('solbot:users', {}))[uid];
+      const all = await store.kvGet('solbot:users', {}), u = Object.hasOwn(all, uid) ? all[uid] : undefined;   // hasOwn: 'uid' = '__proto__' no debe resolver al prototipo
       if (!u) return send(res, 404, { error: 'no conectado' });
       return send(res, 200, await solPublic(uid, u));
     }
@@ -117,7 +117,7 @@ export function startApi(port = Number(process.env.PORT || process.env.API_PORT 
         if (!isUid(uid)) return send(res, 400, { error: 'uid no valido' });
         return withSolLock(async () => {
           const users = await store.kvGet('solbot:users', {});
-          const u = users[uid];
+          const u = Object.hasOwn(users, uid) ? users[uid] : undefined;
           if (url.pathname === '/api/solbot/connect') {
             if (!isAddr(body.wallet)) return send(res, 400, { error: 'wallet no valida' });
             const taken = Object.entries(users).find(([k, v]) => k !== uid && v && v.wallet === body.wallet);
