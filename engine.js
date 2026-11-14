@@ -72,6 +72,22 @@ async function processSignal(sig) {
         continue;
       }
 
+      if (sig.action === 'reduce') {   // corte parcial anticipado: vende una fracción (reduceOnly) y mantiene el resto con su stop/trailing
+        const match = p => sig.posId ? p.posId === sig.posId : p.symbol === sig.symbol;
+        const frac = Math.min(0.95, Math.max(0.05, Number(sig.frac) || 0.5));
+        const targets = posList.filter(p => match(p) && !p.preCut);   // idempotente: como mucho una vez por posición
+        if (!targets.length) continue;
+        for (const p of targets) {
+          const cutAmt = p.amount * frac, cutUsd = (p.amountUsd || 0) * frac;
+          if (MODE === 'live' && live) { try { await live.ex.placeOrder(live.client, { symbol: sig.symbol, side: p.side === 'long' ? 'sell' : 'buy', amount: cutAmt, type: 'market', clientOrderId, params: { reduceOnly: true } }); } catch (e) {} }
+          p.amount -= cutAmt; p.amountUsd = +((p.amountUsd || 0) - cutUsd).toFixed(2); p.preCut = true;
+          store.logOrder({ mode: MODE, uid: c.uid, signalId: sig.id, posId: sig.posId, symbol: sig.symbol, action: 'reduce', amountUsd: +cutUsd.toFixed(2), status: MODE === 'live' ? 'sent' : 'paper-reduced' });
+          console.log(`[${MODE}] ${c.uid} reduce ${Math.round(frac * 100)}% ${sig.symbol} (${sig.posId || sig.symbol})`);
+        }
+        await store.saveState(st);
+        continue;
+      }
+
       const openExposureUsd = posList.reduce((a, p) => a + (p.amountUsd || 0), 0);
       const size = sizeForClient({ cfg: c.cfg, balanceUsd, openExposureUsd, signalPrice: sig.price });
       if (size.blocked) { store.logOrder({ mode: MODE, uid: c.uid, signalId: sig.id, status: 'skipped', reason: size.reason }); continue; }

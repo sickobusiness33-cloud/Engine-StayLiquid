@@ -8,7 +8,7 @@
 // Primer arranque: calienta con el histórico en silencio (no emite trades viejos),
 // fija el último bar y a partir de ahí emite solo lo NUEVO, igual que el bot.
 // ============================================================================
-const P = { LOOK: 288, N: 3, S0: 0.006, ARM: 0.012, TR: 0.02, ZONE: 0.001 };
+const P = { LOOK: 288, N: 3, S0: 0.006, ARM: 0.012, TR: 0.02, ZONE: 0.001, PRE: 0.5, PCUT: 0.5 };
 const SYMBOL = 'BTC/USDT';
 
 // --- velas 5m: Binance.vision -> Coinbase (las mismas fuentes que la web) ---
@@ -61,6 +61,11 @@ function step(s, bars, emit) {
       const fav = p.dir > 0 ? p.peak / p.entry - 1 : 1 - p.peak / p.entry;
       if (!p.armed && fav >= P.ARM) { p.armed = true; p.stop = p.entry; }
       if (p.armed) { const ts = p.dir > 0 ? p.peak * (1 - P.TR) : p.peak * (1 + P.TR); p.stop = p.dir > 0 ? Math.max(p.stop, ts) : Math.min(p.stop, ts); }
+      // corte parcial anticipado: a mitad de camino al stop (y antes de armar) cierra una fracción de la posición para ahorrar en las pérdidas
+      if (!p.preDone && !p.armed) {
+        const preLvl = p.dir > 0 ? p.entry * (1 - P.S0 * P.PRE) : p.entry * (1 + P.S0 * P.PRE);
+        if (p.dir > 0 ? b.l <= preLvl : b.h >= preLvl) { p.preDone = true; if (emit) emit({ id: 'st-' + (++s.idc), posId: p.posId, symbol: SYMBOL, side: p.dir > 0 ? 'sell' : 'buy', action: 'reduce', frac: P.PCUT, price: +preLvl.toFixed(1) }); }
+      }
       const hit = p.dir > 0 ? b.l <= p.stop : b.h >= p.stop;
       if (hit) { p.closed = true; if (emit) emit({ id: 'st-' + (++s.idc), posId: p.posId, symbol: SYMBOL, side: p.dir > 0 ? 'sell' : 'buy', action: 'close', price: +p.stop.toFixed(1) }); }
     }
@@ -72,7 +77,7 @@ function step(s, bars, emit) {
       const fresh = !s.open.some(p => p.brkId === s.brkId);
       if (pulled && confirm && fresh) {
         const posId = 'p' + s.brkId + '-' + (s.idc + 1);
-        s.open.push({ dir: s.trend, entry: b.c, t0: b.t, brkId: s.brkId, stop: s.trend > 0 ? b.c * (1 - P.S0) : b.c * (1 + P.S0), armed: false, peak: b.c, closed: false, posId });
+        s.open.push({ dir: s.trend, entry: b.c, t0: b.t, brkId: s.brkId, stop: s.trend > 0 ? b.c * (1 - P.S0) : b.c * (1 + P.S0), armed: false, peak: b.c, closed: false, preDone: false, posId });
         if (emit) emit({ id: 'st-' + (++s.idc), posId, symbol: SYMBOL, side: s.trend > 0 ? 'buy' : 'sell', action: 'open', price: +b.c.toFixed(1) });
       }
     }
