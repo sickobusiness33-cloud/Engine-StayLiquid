@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "description": "StayLiquid — motor de ejecucion automatica (Fase 1)",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node engine.js",
     "keygen": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
-    "test:vault": "node vault.js --selftest"
+    "test:vault": "node vault.js --selftest",
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "ccxt": "^4.4.0"

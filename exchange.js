@@ -50,6 +50,14 @@ export async function placeOrder(client, { symbol, side, amount, type = 'market'
   return client.createOrder(symbol, type, side, amount, price, p);
 }
 
+// Reglas de cantidad del par: redondeo a la precisión del exchange y cantidad mínima.
+export async function amountRules(client, symbol) {
+  if (!client.markets) await client.loadMarkets();
+  const m = client.market(symbol);
+  const min = Number(m && m.limits && m.limits.amount && m.limits.amount.min) || 0;
+  return { min, round: x => Number(client.amountToPrecision(symbol, x)) };
+}
+
 export async function openPositions(client, symbol) {
   if (typeof client.fetchPositions === 'function') { try { return await client.fetchPositions(symbol ? [symbol] : undefined); } catch (e) {} }
   return [];

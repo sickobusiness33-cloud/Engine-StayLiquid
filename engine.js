@@ -17,6 +17,7 @@ import { store } from './store.js';
 import { sizeForClient } from './sizing.js';
 import { decryptSecret } from './vault.js';
 import { reconcileClient } from './reconcile.js';
+import { executeReduce as executePartial, clampFrac, shouldRetry } from './partial.js';
 import { startApi } from './api.js';
 
 // --- mini cargador de .env (sin dependencias) ---
@@ -48,6 +49,45 @@ async function liveClient(c) {
   return { ex, client };
 }
 
+// Misma posición que la señal (por posId; si no trae, por símbolo). Compartido por close y reduce.
+const matcher = sig => p => sig.posId ? p.posId === sig.posId : p.symbol === sig.symbol;
+
+// Ejecuta el corte parcial de una posición con las garantías de partial.js y lo registra.
+async function runReduce({ p, c, st, symbol, frac, signalId, posId, live }) {
+  const r = await executePartial({ p, uid: c.uid, symbol, frac, deps: { mode: MODE, live, persist: () => store.saveState(st) } });
+  if (r.status === 'noop') return r;
+  const base = { mode: MODE, uid: c.uid, signalId, posId, symbol, action: 'reduce' };
+  if (r.status === 'done') {
+    store.logOrder({ ...base, amountUsd: r.cutUsd, status: MODE === 'live' ? 'sent' : 'paper-reduced', stopResized: r.stopOk });
+    console.log(`[${MODE}] ${c.uid} reduce ${Math.round(clampFrac(frac) * 100)}% ${symbol} (${posId || symbol})${r.stopOk === false ? ' · AVISO: no se pudo recolocar el stop' : ''}`);
+  } else if (r.status === 'skipped') {
+    store.logOrder({ ...base, status: 'skipped', reason: r.reason });
+    console.log(`[${MODE}] ${c.uid} reduce omitido (${r.reason}) ${symbol} (${posId || symbol})`);
+  } else {
+    store.logOrder({ ...base, status: 'error', reason: r.error, tries: p.reducePending && p.reducePending.tries });
+    console.error(`[${MODE}] ${c.uid} reduce FALLÓ (se reintentará): ${r.error}`);
+  }
+  return r;
+}
+
+// Reintenta (acotado) los cortes que fallaron: máx. 3 intentos en 2 minutos; la posición sigue entera mientras tanto.
+async function retryReduces() {
+  const clients = await store.clients();
+  const st = await store.state();
+  let dirty = false;
+  for (const c of clients) {
+    if (!c.active || c.cfg?.active === false) continue;
+    for (const p of (st.positions[c.uid] || [])) {
+      if (!shouldRetry(p)) continue;
+      let live = null;
+      if (MODE === 'live') { try { live = await liveClient(c); } catch (e) { continue; } }
+      await runReduce({ p, c, st, symbol: p.symbol, frac: p.reducePending.frac, signalId: 'retry', posId: p.posId, live });
+      dirty = true;
+    }
+  }
+  if (dirty) await store.saveState(st);
+}
+
 async function processSignal(sig) {
   lastPriceBySymbol[sig.symbol] = sig.price;
   const clients = await store.clients();
@@ -63,7 +103,7 @@ async function processSignal(sig) {
       if (MODE === 'live') { live = await liveClient(c); balanceUsd = await live.ex.balanceUSDT(live.client); }
 
       if (sig.action === 'close') {
-        const match = p => sig.posId ? p.posId === sig.posId : p.symbol === sig.symbol;   // cierra la MISMA posición que cerró el bot
+        const match = matcher(sig);   // cierra la MISMA posición que cerró el bot
         if (MODE === 'live' && live) { for (const p of posList.filter(match)) { try { if (p.stopOrderId) await live.client.cancelOrder(p.stopOrderId, sig.symbol); await live.ex.placeOrder(live.client, { symbol: sig.symbol, side: p.side === 'long' ? 'sell' : 'buy', amount: p.amount, type: 'market', clientOrderId, params: { reduceOnly: true } }); } catch (e) {} } }
         if (!posList.some(match)) continue;
         st.positions[c.uid] = posList.filter(p => !match(p));
@@ -73,17 +113,9 @@ async function processSignal(sig) {
       }
 
       if (sig.action === 'reduce') {   // corte parcial anticipado: vende una fracción (reduceOnly) y mantiene el resto con su stop/trailing
-        const match = p => sig.posId ? p.posId === sig.posId : p.symbol === sig.symbol;
-        const frac = Math.min(0.95, Math.max(0.05, Number(sig.frac) || 0.5));
-        const targets = posList.filter(p => match(p) && !p.preCut);   // idempotente: como mucho una vez por posición
+        const targets = posList.filter(p => matcher(sig)(p) && !p.preCut);   // idempotente: como mucho una vez por posición
         if (!targets.length) continue;
-        for (const p of targets) {
-          const cutAmt = p.amount * frac, cutUsd = (p.amountUsd || 0) * frac;
-          if (MODE === 'live' && live) { try { await live.ex.placeOrder(live.client, { symbol: sig.symbol, side: p.side === 'long' ? 'sell' : 'buy', amount: cutAmt, type: 'market', clientOrderId, params: { reduceOnly: true } }); } catch (e) {} }
-          p.amount -= cutAmt; p.amountUsd = +((p.amountUsd || 0) - cutUsd).toFixed(2); p.preCut = true;
-          store.logOrder({ mode: MODE, uid: c.uid, signalId: sig.id, posId: sig.posId, symbol: sig.symbol, action: 'reduce', amountUsd: +cutUsd.toFixed(2), status: MODE === 'live' ? 'sent' : 'paper-reduced' });
-          console.log(`[${MODE}] ${c.uid} reduce ${Math.round(frac * 100)}% ${sig.symbol} (${sig.posId || sig.symbol})`);
-        }
+        for (const p of targets) await runReduce({ p, c, st, symbol: sig.symbol, frac: sig.frac, signalId: sig.id, posId: sig.posId, live });
         await store.saveState(st);
         continue;
       }
@@ -131,8 +163,11 @@ async function tick() {
     // El motor corre la estrategia del bot y emite señales -> los clientes copian en sync.
     const sm = await stratMod();
     const { signals, state } = await sm.tick(await store.strategyState());
-    await store.saveStrategyState(state);
     for (const sig of signals) await processSignal(sig);
+    // Se guarda DESPUÉS de procesar: si el motor cae a mitad, la próxima vuelta regenera las mismas señales
+    // (mismos ids) y las repite; open/close/reduce son idempotentes, así que ninguna señal se pierde ni se duplica.
+    await store.saveStrategyState(state);
+    await retryReduces();
     return; // mirror puro: el cierre lo manda la estrategia, no un trailing independiente
   }
   const signals = await fetchSignals();
@@ -140,6 +175,7 @@ async function tick() {
   let start = 0;
   if (st.lastSignalId != null) { const i = signals.findIndex(s => s.id === st.lastSignalId); start = i >= 0 ? i + 1 : 0; }
   for (const sig of signals.slice(start)) await processSignal(sig);
+  await retryReduces();
   await reconcileAll();
 }
 
