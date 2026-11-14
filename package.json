@@ -14,6 +14,7 @@
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
+    "@solana/web3.js": "^1.98.4",
     "ccxt": "^4.4.0"
   }
 }

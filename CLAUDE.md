@@ -8,7 +8,7 @@ Ramas: `version-victor` (trabajo) y `main`. El dueño ordenó expresamente (2026
 - Usar las skills/agentes/hooks de ECC que apliquen (no todas: solo las relevantes) y empezar con un informe breve: PROYECTO, TIPO DE TAREA, SKILLS/AGENTES/WORKFLOWS/MCP recomendados, MOTIVO.
 - Flujo: Research → Plan → Implement → Test → Review → Verify. TDD: test que falla primero (RED), luego el mínimo código (GREEN).
 - Antes de dar nada por terminado: revisión de código (`code-reviewer`), de seguridad (`security-reviewer`) y de fallos silenciosos (`silent-failure-hunter`); arreglar lo CRITICAL/HIGH.
-- Todo es modo paper: no hay pruebas contra un exchange real. Decirlo siempre claramente; un exchange simulado NO es evidencia de comportamiento real.
+- Bot BTC: todo es modo paper (sin pruebas contra un exchange real; un exchange simulado NO es evidencia de comportamiento real). Decirlo siempre claramente. ATENCIÓN: el Copy Bot de Solana (sección siguiente) mueve DINERO REAL en mainnet cuando `SOLBOT_LIVE=on`; nunca se ha ejecutado un swap real ni una transferencia real de retiro.
 - Nunca poner secretos/claves en código, logs ni estado. No inventar cifras de rendimiento.
 - Commits y comentarios sin nombre de ningún modelo de IA. Commitear y subir a `origin/version-victor` cuando se pida.
 
@@ -40,3 +40,11 @@ MEDIO:
 - `reduceOrderId` usa `posId || symbol` (mismo riesgo de colisión que se evitó en el cierre). `open` no redondea el tamaño a la precisión del exchange.
 - `engine.js` no es testeable en unidad (arranca el bucle al importarse): sacar `main()` a una guarda `if (import.meta.url…)`.
 Sin pruebas contra un exchange real ni testnet: todo verificado solo con simulaciones.
+
+## Copy Bot de Solana (simulación y DINERO REAL) — añadido 2026-11-14
+Cada usuario tiene una wallet de bot (clave cifrada con el vault, en `solbot:botwallets`) que se fondea a mano; el motor copia con ella, 24/7, los swaps nuevos del bot StayLiquid (`/api/copy/feed`) vía Jupiter. La wallet personal del usuario nunca se toca. Es CUSTODIA OPERATIVA de los fondos de esa wallet: la web lo dice (términos, pie, página Auto Copy).
+- Módulos: `solwallet.js` (claves, cadena, transferencias, verificación de la firma de autorización), `jupiter.js` (order → firmar → execute; solo firma si el bot es la única firmante y la pagadora), `sollive.js` (ciclo real, ventas pendientes, retiro), `solapi.js` (rutas `/api/solbot/*`), `solbot.js` (simulación). Bucle PROPIO en `engine.js`: un swap lento nunca retrasa al bot BTC.
+- INTERRUPTOR: `SOLBOT_LIVE=on` en Railway activa el dinero real. Apagado, las wallets y ajustes se guardan pero no se opera. Recomendado: `SOLANA_RPC_URL` de pago (el público se limita), `JUPITER_API_KEY`, `JUP_REFERRAL_ACCOUNT` + `SOLBOT_FEE_BPS` (110) para la comisión. `SOLBOT_MAX_PRICE_DEV` (0.25) = no comprar si el precio ya está >25% por encima del bot origen.
+- Reglas que NO romper: intención guardada ANTES de mover dinero (`persist`); una operación por usuario a la vez (`withUserLock`); las ventas nunca se pierden (`live.pending`, 12 intentos/30 min); el destino del retiro es SIEMPRE `payoutWallet` y cambiarla tarda 24 h (`PAYOUT_DELAY_MS`); desconectar NO borra la wallet del bot; ningún error con URL/clave sin pasar por `scrub()`; topes duros `LIVE_LIMITS` (1 SOL/operación, 5 SOL abiertos).
+- SIN VERIFICAR: ningún swap real en mainnet, ninguna transferencia de retiro enviada a la red (el grifo de devnet está cerrado), ni con Jupiter con fondos reales. Lo probado: claves, firmas y transacciones reales con red/Jupiter simulados, lecturas reales de mainnet y una transacción real de Jupiter (solo parseo). PRIMERA PRUEBA OBLIGATORIA antes de abrirlo a usuarios: wallet propia con ~0,05 SOL, un swap pequeño y un retiro.
+- Tests: `npm test` (98).

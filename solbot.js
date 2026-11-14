@@ -13,8 +13,8 @@ const FEE = FEE_BPS / 1e4, SLIP = SLIP_BPS / 1e4;
 const MAX_TRADES = 100, MAX_DONE = 300;
 
 export const isAddr = s => typeof s === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s);
-const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+export const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 // Ajustes del usuario con límites duros (la validación autoritativa es esta, no la del navegador).
 export function normalizeCfg(c) {
@@ -45,8 +45,8 @@ export function copySize(cfg, srcSol, paper) {
   return { sol };
 }
 
-const toMs = at => { const n = Number(at); return n > 1e12 ? n : n * 1000; };
-const note = (paper, t) => { paper.trades.unshift(t); if (paper.trades.length > MAX_TRADES) paper.trades.length = MAX_TRADES; };
+export const toMs = at => { const n = Number(at); return n > 1e12 ? n : n * 1000; };
+export const note = (paper, t) => { paper.trades.unshift(t); if (paper.trades.length > MAX_TRADES) paper.trades.length = MAX_TRADES; };
 
 // Aplica UNA operación de la fuente a la cuenta virtual. Idempotente por sig. Devuelve true si cambió algo.
 export function applyItem(paper, cfg, item, sinceMs) {
@@ -96,7 +96,7 @@ export async function solbotTick({ store, fetchFeed, now = Date.now, minGapMs = 
   if (now() - g.last < minGapMs) return { skipped: 'gap' };
   g.last = now();
   const users = await store.kvGet('solbot:users', {});
-  const active = Object.entries(users).filter(([, u]) => u && u.active && isAddr(u.wallet));
+  const active = Object.entries(users).filter(([, u]) => u && u.active && u.mode !== 'live' && isAddr(u.wallet));   // los usuarios 'live' los lleva sollive.js
   if (!active.length) return { users: 0 };
   const feed = await fetchFeed();
   if (!feed || !Array.isArray(feed.items)) return { error: 'feed' };
