@@ -58,7 +58,8 @@ export async function amountRules(client, symbol) {
   return { min, round: x => Number(client.amountToPrecision(symbol, x)) };
 }
 
+// Posiciones reales del exchange. Devuelve null si NO se puede saber (sin fetchPositions o error): null != "no hay posiciones".
 export async function openPositions(client, symbol) {
-  if (typeof client.fetchPositions === 'function') { try { return await client.fetchPositions(symbol ? [symbol] : undefined); } catch (e) {} }
-  return [];
+  if (typeof client.fetchPositions === 'function') { try { return await client.fetchPositions(symbol ? [symbol] : undefined); } catch (e) { return null; } }
+  return null;
 }

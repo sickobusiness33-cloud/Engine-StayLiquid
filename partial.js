@@ -49,7 +49,7 @@ export function planCut(amount, frac, { round = x => x, min = 0 } = {}) {
 // Devuelve { status: 'done'|'skipped'|'failed'|'noop', cutUsd?, reason?, stopOk? }
 export async function executeReduce({ p, uid, symbol, frac, deps }) {
   const { mode, live, persist, now = Date.now } = deps;
-  if (p.preCut) return { status: 'noop' };
+  if (p.preCut || p.closePending) return { status: 'noop' };   // si se está cerrando entera, no se trocea
   const f = clampFrac(frac);
   const isLive = mode === 'live' && live;
 
@@ -98,7 +98,7 @@ function markFailed(p, frac, now, error) {
 // ¿toca reintentar este corte pendiente? (acotado en intentos y en tiempo)
 export function shouldRetry(p, now = Date.now()) {
   const r = p.reducePending;
-  if (!r || p.preCut) return false;
+  if (!r || p.preCut || p.closePending) return false;
   if (r.tries >= RETRY.maxTries) return false;
   if (now - r.firstAt > RETRY.windowMs) return false;
   return now - r.lastAt >= RETRY.minGapMs;

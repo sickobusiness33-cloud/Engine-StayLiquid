@@ -43,6 +43,12 @@ Config por cliente (`cfg`):
 ```
 `action`: `open` abre, `close` cierra. El motor procesa solo las **nuevas** (por `id`).
 
+### Cierre seguro (`close.js`)
+- Un fallo del exchange al cerrar **no se ignora**: la posición se queda en el estado del motor (con su stop en reposo) y se reintenta, máx. **3 intentos en 2 minutos**. Cada intento fallido se registra con `status: "error"` y el motivo (acotado a 300 caracteres). Agotados los reintentos, la posición **sigue abierta y gestionada** (`closePending` en el estado, log con `gaveUp: true`) y requiere intervención manual; una señal `close` nueva vuelve a intentarlo.
+- Cantidad redondeada a la precisión del par y mínimos respetados (`amountRules`). **Polvo**: si la cantidad es 0 o queda bajo el mínimo del par, el exchange rechazaría cualquier orden; el motor no envía nada, **libera** la posición del estado y lo registra como `status: "skipped"`, `reason: "dust_below_min:…"` (con aviso en consola).
+- Idempotente: `clientOrderId` determinista por posición (ligado a su orden de apertura) y la intención (`closePending`) se guarda **antes** de enviar. Si el exchange rechaza por duplicado se da por hecho (`via: "duplicate"` en el log).
+- El stop en reposo (`stopOrderId`) se cancela **solo tras confirmar el cierre**. Si cancelarlo falla, el log lleva `stopCancelled: false` y hay aviso en consola (un stop `reduceOnly` huérfano podría tocar una posición futura: cancelarlo a mano).
+
 ## Pasar a modo live (cuando todo esté validado)
 1. Despliega el vault con un **KMS** real (ver `src/vault.js` → `// >>> KMS`).
 2. Alta de cliente: pega sus claves **solo-trading (sin retirada)** → `encryptSecret` → guárdalas en `clients.json`/BD.

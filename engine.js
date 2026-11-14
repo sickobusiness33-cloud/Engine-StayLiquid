@@ -18,6 +18,7 @@ import { sizeForClient } from './sizing.js';
 import { decryptSecret } from './vault.js';
 import { reconcileClient } from './reconcile.js';
 import { executeReduce as executePartial, clampFrac, shouldRetry } from './partial.js';
+import { closePosition, shouldRetryClose, closeExhausted, markCloseFailed, safeErr } from './close.js';
 import { startApi } from './api.js';
 
 // --- mini cargador de .env (sin dependencias) ---
@@ -42,10 +43,10 @@ let EX = null; async function exMod() { if (!EX) EX = await import('./exchange.j
 // Construye el cliente de exchange (live) descifrando las claves solo en memoria.
 async function liveClient(c) {
   const ex = await exMod();
-  const creds = JSON.parse(decryptSecret(c.creds));
+  let creds; try { creds = JSON.parse(decryptSecret(c.creds)); } catch (e) { throw new Error('credenciales ilegibles'); }   // sin citar el contenido descifrado
   const client = ex.makeClient({ exchange: c.exchange, ...creds });
   const chk = await ex.verifyTradeOnly(client);
-  if (!chk.ok) throw new Error('clave rechazada (' + chk.reason + ')');
+  if (!chk.ok) throw new Error('clave rechazada (' + String(chk.reason).slice(0, 120) + ')');
   return { ex, client };
 }
 
@@ -68,6 +69,54 @@ async function runReduce({ p, c, st, symbol, frac, signalId, posId, live }) {
     console.error(`[${MODE}] ${c.uid} reduce FALLÓ (se reintentará): ${r.error}`);
   }
   return r;
+}
+
+// Cierra una posición con las garantías de close.js y lo registra. La posición solo sale del estado si el cierre se confirma
+// (o es polvo bajo el mínimo, que se registra como 'skipped'); si el exchange falla, se queda con su stop y se reintenta.
+async function runClose({ p, c, st, signalId, posId, live }) {
+  const symbol = p.symbol;   // se cierra el símbolo de la POSICIÓN, nunca el que diga la señal (una señal con otro símbolo cerraría una posición ajena)
+  const { list, result: r } = await closePosition({ list: st.positions[c.uid] || [], p, uid: c.uid, symbol, signalId, deps: { mode: MODE, live, persist: () => store.saveStateStrict(st) } });
+  st.positions[c.uid] = list;
+  const base = { mode: MODE, uid: c.uid, signalId, posId, symbol, action: 'close' };
+  const where = `${c.uid} close ${symbol} (${posId || symbol})`;
+  if (r.status === 'done') {
+    await logSafe({ ...base, amountUsd: r.closedUsd, status: MODE === 'live' ? 'sent' : 'paper-closed', via: r.via, residual: r.residual || undefined, stopCancelled: r.stopCancelled, stopError: r.stopError });
+    console.log(`[${MODE}] ${where}${r.via === 'duplicate' ? ' · ya enviado antes (duplicado)' : ''}`);
+    if (r.stopCancelled === false) console.error(`[${MODE}] ${where} AVISO: cerrada pero NO se pudo cancelar el stop ${r.stopOrderId} (${r.stopError}); cancélalo a mano`);
+  } else if (r.status === 'dust') {
+    await logSafe({ ...base, status: 'skipped', reason: 'dust_below_min:' + r.reason, amount: r.amount, stopCancelled: r.stopCancelled, stopError: r.stopError });
+    console.error(`[${MODE}] ${where} polvo (${r.reason}, cantidad ${r.amount}): no se puede cerrar en el exchange, se libera del motor`);
+  } else {
+    const gaveUp = closeExhausted(p);
+    await logSafe({ ...base, status: 'error', reason: r.error, tries: r.tries, gaveUp: gaveUp || undefined });
+    console.error(`[${MODE}] ${where} FALLÓ: ${r.error} · ${gaveUp ? 'reintentos agotados: la posición SIGUE ABIERTA y bajo el stop; requiere intervención manual' : 'se mantiene y se reintentará'}`);
+  }
+  return r;
+}
+
+// Un fallo al registrar no debe tumbar el motor ni repetir una orden ya enviada.
+async function logSafe(entry) { try { await store.logOrder(entry); } catch (e) { console.error('log error:', String(e.message || e).slice(0, 200)); } }
+
+// Reintenta (acotado) los cierres que fallaron: máx. 3 intentos en 2 minutos; la posición sigue en el estado mientras tanto.
+async function retryCloses() {
+  const clients = await store.clients();
+  const st = await store.state();
+  let dirty = false;
+  for (const c of clients) {
+    if (!c.active || c.cfg?.active === false) continue;
+    for (const p of [...(st.positions[c.uid] || [])]) {
+      if (!shouldRetryClose(p)) continue;
+      let live = null;
+      if (MODE === 'live') {
+        try { live = await liveClient(c); }
+        catch (e) { markCloseFailed(p, 'retry', e); await logSafe({ mode: MODE, uid: c.uid, signalId: 'retry', symbol: p.symbol, posId: p.posId, action: 'close', status: 'error', reason: safeErr(e), tries: p.closePending.tries, gaveUp: closeExhausted(p) || undefined }); dirty = true; continue; }
+      }
+      try { await runClose({ p, c, st, signalId: 'retry', posId: p.posId, live }); }
+      catch (e) { await logSafe({ mode: MODE, uid: c.uid, signalId: 'retry', posId: p.posId, symbol: p.symbol, action: 'close', status: 'error', reason: safeErr(e) }); console.error(`[${MODE}] ${c.uid} retry close ERROR:`, safeErr(e)); }
+      dirty = true;
+    }
+  }
+  if (dirty) await store.saveState(st);
 }
 
 // Reintenta (acotado) los cortes que fallaron: máx. 3 intentos en 2 minutos; la posición sigue entera mientras tanto.
@@ -100,20 +149,22 @@ async function processSignal(sig) {
 
     try {
       let balanceUsd = Number(c.cfg?.paperBalanceUsd || 1000), live = null;
-      if (MODE === 'live') { live = await liveClient(c); balanceUsd = await live.ex.balanceUSDT(live.client); }
+      if (MODE === 'live') {
+        live = await liveClient(c);
+        // cerrar/recortar no necesita el saldo: una consulta de saldo fallida no debe impedir un cierre
+        if (sig.action !== 'close' && sig.action !== 'reduce') balanceUsd = await live.ex.balanceUSDT(live.client);
+      }
 
-      if (sig.action === 'close') {
-        const match = matcher(sig);   // cierra la MISMA posición que cerró el bot
-        if (MODE === 'live' && live) { for (const p of posList.filter(match)) { try { if (p.stopOrderId) await live.client.cancelOrder(p.stopOrderId, sig.symbol); await live.ex.placeOrder(live.client, { symbol: sig.symbol, side: p.side === 'long' ? 'sell' : 'buy', amount: p.amount, type: 'market', clientOrderId, params: { reduceOnly: true } }); } catch (e) {} } }
-        if (!posList.some(match)) continue;
-        st.positions[c.uid] = posList.filter(p => !match(p));
-        store.logOrder({ mode: MODE, uid: c.uid, signalId: sig.id, posId: sig.posId, symbol: sig.symbol, action: 'close', status: MODE === 'live' ? 'sent' : 'paper-closed' });
-        console.log(`[${MODE}] ${c.uid} close ${sig.symbol} (${sig.posId || sig.symbol})`);
+      if (sig.action === 'close') {   // cierra la MISMA posición que cerró el bot, con las garantías de close.js
+        const targets = posList.filter(matcher(sig));
+        if (!targets.length) { await logSafe({ mode: MODE, uid: c.uid, signalId: sig.id, posId: sig.posId, symbol: sig.symbol, action: 'close', status: 'skipped', reason: 'no_matching_position' }); continue; }
+        for (const p of targets) await runClose({ p, c, st, signalId: sig.id, posId: sig.posId, live });
+        await store.saveState(st);
         continue;
       }
 
       if (sig.action === 'reduce') {   // corte parcial anticipado: vende una fracción (reduceOnly) y mantiene el resto con su stop/trailing
-        const targets = posList.filter(p => matcher(sig)(p) && !p.preCut);   // idempotente: como mucho una vez por posición
+        const targets = posList.filter(p => matcher(sig)(p) && !p.preCut && !p.closePending);   // idempotente: como mucho una vez por posición
         if (!targets.length) continue;
         for (const p of targets) await runReduce({ p, c, st, symbol: sig.symbol, frac: sig.frac, signalId: sig.id, posId: sig.posId, live });
         await store.saveState(st);
@@ -132,8 +183,10 @@ async function processSignal(sig) {
       store.logOrder({ mode: MODE, uid: c.uid, clientOrderId, signalId: sig.id, symbol: sig.symbol, side, action: 'open', amountUsd: size.amountUsd, entry: sig.price, exchangeOrderId, status });
       console.log(`[${MODE}] ${c.uid} open ${side} ${sig.symbol} ~$${size.amountUsd.toFixed(2)} (${status})`);
     } catch (e) {
-      store.logOrder({ mode: MODE, uid: c.uid, signalId: sig.id, status: 'error', reason: String(e.message || e) });
-      console.error(`[${MODE}] ${c.uid} ERROR:`, e.message || e);
+      await logSafe({ mode: MODE, uid: c.uid, signalId: sig.id, posId: sig.posId, symbol: sig.symbol, action: sig.action, status: 'error', reason: safeErr(e) });
+      console.error(`[${MODE}] ${c.uid} ERROR:`, safeErr(e));
+      // un cierre que no pudo ni intentarse (p. ej. clave rechazada, red caída) NO se pierde: se programa su reintento acotado
+      if (sig.action === 'close') for (const p of posList.filter(matcher(sig))) if (!p.closePending) markCloseFailed(p, sig.id, e);
     }
   }
   st.lastSignalId = sig.id;
@@ -167,6 +220,7 @@ async function tick() {
     // Se guarda DESPUÉS de procesar: si el motor cae a mitad, la próxima vuelta regenera las mismas señales
     // (mismos ids) y las repite; open/close/reduce son idempotentes, así que ninguna señal se pierde ni se duplica.
     await store.saveStrategyState(state);
+    await retryCloses();
     await retryReduces();
     return; // mirror puro: el cierre lo manda la estrategia, no un trailing independiente
   }
@@ -175,6 +229,7 @@ async function tick() {
   let start = 0;
   if (st.lastSignalId != null) { const i = signals.findIndex(s => s.id === st.lastSignalId); start = i >= 0 ? i + 1 : 0; }
   for (const sig of signals.slice(start)) await processSignal(sig);
+  await retryCloses();
   await retryReduces();
   await reconcileAll();
 }
@@ -183,6 +238,6 @@ async function main() {
   startApi();
   console.log(`StayLiquid Engine · modo=${MODE} · fuente=${SRC} · poll=${POLL}ms`);
   if (MODE === 'live') console.log('*** MODO LIVE: ordenes REALES. Valida en paper antes. ***');
-  for (;;) { await tick().catch(e => console.error('tick error', e)); await new Promise(r => setTimeout(r, POLL)); }
+  for (;;) { await tick().catch(e => console.error('tick error', safeErr(e))); await new Promise(r => setTimeout(r, POLL)); }
 }
 main();

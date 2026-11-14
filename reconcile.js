@@ -41,9 +41,13 @@ export async function reconcileClient({ mode, ex, client, uid, positions, lastPr
   if (mode === 'live' && client) {
     try {
       const real = await ex.openPositions(client, symbol);
-      const realOpen = real.some(p => Math.abs(Number(p.contracts || p.amount || 0)) > 0);
-      if (!realOpen) { for (const pos of positions) pos._closed = true; log?.({ uid, event: 'closed-on-exchange', symbol }); }
-    } catch (e) {}
+      // real === null -> el exchange no pudo responder (error, límite de peticiones, sin fetchPositions): se DESCONOCE el estado.
+      // Nunca se borra una posición por falta de datos: borrarla dejaría una posición abierta (o un cierre pendiente) sin control.
+      if (real !== null) {
+        const realOpen = real.some(p => Math.abs(Number(p.contracts || p.amount || 0)) > 0);
+        if (!realOpen) { for (const pos of positions) if (pos.symbol === symbol) pos._closed = true; log?.({ uid, event: 'closed-on-exchange', symbol }); }   // solo las de ESTE símbolo
+      }
+    } catch (e) { log?.({ uid, event: 'reconcile-check-failed', symbol, reason: String((e && e.message) || e).slice(0, 200) }); }
   }
 
   return positions.filter(p => !p._closed);

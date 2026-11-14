@@ -28,10 +28,13 @@ async function kvGet(key, def) {
     return rows.length && rows[0].v != null ? rows[0].v : def;
   } catch (e) { return def; }
 }
-async function kvSet(key, v) {
+// strict=true: si Supabase no confirma la escritura (red o HTTP no-2xx) LANZA, para que quien necesite
+// la garantía «guardado antes de enviar la orden» (close.js) no envíe nada sin intención persistida.
+async function kvSet(key, v, strict = false) {
   try {
-    await fetch(`${SB_URL}/rest/v1/engine_kv`, { method: 'POST', headers: sbHeaders({ prefer: 'resolution=merge-duplicates,return=minimal' }), body: JSON.stringify([{ k: key, v, updated_at: new Date().toISOString() }]) });
-  } catch (e) {}
+    const r = await fetch(`${SB_URL}/rest/v1/engine_kv`, { method: 'POST', headers: sbHeaders({ prefer: 'resolution=merge-duplicates,return=minimal' }), body: JSON.stringify([{ k: key, v, updated_at: new Date().toISOString() }]) });
+    if (strict && !r.ok) throw new Error('supabase kvSet HTTP ' + r.status);
+  } catch (e) { if (strict) throw new Error('no se pudo guardar el estado: ' + String(e.message || e).slice(0, 120)); }
 }
 async function orderInsert(entry) {
   try {
@@ -51,11 +54,15 @@ export const store = {
   async saveClients(c) { if (USE_SB) await kvSet('clients', c); else writeJSON('clients.json', c); },
   async state() { return USE_SB ? await kvGet('state', { lastSignalId: null, positions: {} }) : readJSON('state.json', { lastSignalId: null, positions: {} }); },
   async saveState(s) { if (USE_SB) await kvSet('state', s); else writeJSON('state.json', s); },
+  async saveStateStrict(s) { if (USE_SB) await kvSet('state', s, true); else writeJSON('state.json', s); },   // lanza si no se confirma la escritura
   async strategyState() { return USE_SB ? await kvGet('strategy', null) : readJSON('strategy.json', null); },
   async saveStrategyState(s) { if (USE_SB) await kvSet('strategy', s); else writeJSON('strategy.json', s); },
+  // Nunca lanza: muchos llamantes no esperan (await) este log y un fallo aquí tumbaría el proceso (rechazo no capturado).
   async logOrder(entry) {
-    if (USE_SB) await orderInsert(entry);
-    else { ensure(); fs.appendFileSync(p('orders.log'), JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n'); }
+    try {
+      if (USE_SB) await orderInsert(entry);
+      else { ensure(); fs.appendFileSync(p('orders.log'), JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n'); }
+    } catch (e) { console.error('log error:', String((e && e.message) || e).slice(0, 200)); }
   },
   // Ticket de soporte -> tabla support_tickets en Supabase (o archivo local).
   async insertTicket(t) {
