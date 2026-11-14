@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cierre seguro StayLiquid</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Concepto: panel de control sobrio, una posición BTC y su historial de órdenes, con interruptor motor antiguo / motor nuevo. */
+:root {
+  --bg: #f4f6f7; --surface: #ffffff; --fg: #14202a; --muted: #5a6975; --line: #d9e0e5;
+  --accent: #0b6e6e; --accent-soft: #dff1f0;
+  --ok: #17794a; --ok-soft: #dff3e8; --warn: #9a5b00; --warn-soft: #fbeccf; --bad: #b3261e; --bad-soft: #fbe1de;
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f171d; --surface: #17222a; --fg: #e6edf1; --muted: #93a3ae; --line: #2a3943;
+  --accent: #4fc3c0; --accent-soft: #14343a;
+  --ok: #5fd39a; --ok-soft: #163a2a; --warn: #f0b95a; --warn-soft: #3d2f12; --bad: #ff8a80; --bad-soft: #432220; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f171d; --surface: #17222a; --fg: #e6edf1; --muted: #93a3ae; --line: #2a3943;
+  --accent: #4fc3c0; --accent-soft: #14343a;
+  --ok: #5fd39a; --ok-soft: #163a2a; --warn: #f0b95a; --warn-soft: #3d2f12; --bad: #ff8a80; --bad-soft: #432220; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 400 15px/1.55 var(--font); padding-block: 28px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+h1 { font-size: clamp(26px, 5vw, 36px); line-height: 1.15; margin: 0 0 8px; text-wrap: balance; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+p { margin: 0; max-width: 65ch; }
+.lead { color: var(--muted); font-size: 16px; }
+.note { font-size: 13px; color: var(--muted); border-left: 3px solid var(--warn); padding: 4px 0 4px 12px; max-width: 70ch; }
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; min-width: 0; }
+.box h3 { margin: 0 0 8px; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.box ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.tag { font: 600 11px/1 var(--font); padding: 4px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+.tag.bad { background: var(--bad-soft); color: var(--bad); } .tag.ok { background: var(--ok-soft); color: var(--ok); }
+.sim { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; }
+@media (max-width: 700px) { .sim { grid-template-columns: minmax(0, 1fr); } }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 14px; flex-wrap: wrap; }
+.seg button { font: 500 14px var(--font); padding: 8px 14px; border: 0; background: var(--surface); color: var(--fg); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.btn { font: 500 14px var(--font); padding: 9px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+.btn.fail { border-color: var(--bad); color: var(--bad); } .btn.good { border-color: var(--ok); color: var(--ok); }
+.btn:disabled { opacity: .45; cursor: default; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; flex-wrap: wrap; }
+.row:last-child { border-bottom: 0; }
+.row span:first-child { color: var(--muted); }
+.row b { font-family: var(--mono); font-weight: 500; font-size: 13px; text-align: right; overflow-wrap: anywhere; }
+.pill { display: inline-block; font: 600 12px var(--font); padding: 3px 9px; border-radius: 999px; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); } .pill.bad { background: var(--bad-soft); color: var(--bad); } .pill.warn { background: var(--warn-soft); color: var(--warn); }
+.log { font: 400 12.5px/1.5 var(--mono); display: flex; flex-direction: column; gap: 6px; max-height: 360px; overflow: auto; }
+.log div { padding: 8px 10px; border-radius: 6px; background: var(--bg); border-left: 3px solid var(--line); overflow-wrap: anywhere; }
+.log .e { border-left-color: var(--bad); } .log .s { border-left-color: var(--ok); } .log .w { border-left-color: var(--warn); }
+.empty { color: var(--muted); font: 400 14px var(--font); }
+.msg { margin-top: 14px; font-size: 14px; padding: 10px 12px; border-radius: 6px; background: var(--accent-soft); }
+.msg.bad { background: var(--bad-soft); } .msg.warn { background: var(--warn-soft); }
+
+/* ---- Movimiento: entrada escalonada, microinteracciones y efectos de estado ---- */
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes grow { from { width: 0; } to { width: 56px; } }
+@keyframes pop { 0% { transform: scale(.82); opacity: 0; } 60% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(-14px); background: var(--accent-soft); } to { opacity: 1; transform: none; } }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 18% { transform: translateX(-7px); } 36% { transform: translateX(6px); } 54% { transform: translateX(-4px); } 72% { transform: translateX(3px); } }
+@keyframes glow { 0% { box-shadow: 0 0 0 0 var(--ok); } 100% { box-shadow: 0 0 0 16px transparent; } }
+@keyframes breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+main > header, main > .note, main > section { animation: rise .6s cubic-bezier(.2,.7,.2,1) both; }
+main > .note { animation-delay: .08s; }
+main > section:nth-of-type(1) { animation-delay: .16s; }
+main > section:nth-of-type(2) { animation-delay: .26s; }
+h1::after { content: ""; display: block; height: 3px; width: 56px; margin-top: 12px; border-radius: 2px; background: var(--accent); animation: grow .8s .35s cubic-bezier(.2,.7,.2,1) both; }
+
+.box { transition: transform .25s ease, box-shadow .25s ease, border-color .25s ease; }
+.box:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 10px 24px -14px var(--accent); }
+.compare .box:nth-child(1):hover { border-color: var(--bad); box-shadow: 0 10px 24px -14px var(--bad); }
+.compare .box:nth-child(2):hover { border-color: var(--ok); box-shadow: 0 10px 24px -14px var(--ok); }
+.compare .box li { transition: transform .2s ease; }
+.compare .box li:hover { transform: translateX(4px); }
+
+.btn, .seg button { transition: transform .15s ease, background .2s ease, color .2s ease, box-shadow .2s ease, border-color .2s ease; }
+.btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 14px -8px currentColor; }
+.btn:active:not(:disabled) { transform: translateY(0) scale(.96); }
+.btn.fail:hover:not(:disabled) { background: var(--bad-soft); } .btn.good:hover:not(:disabled) { background: var(--ok-soft); }
+.seg button:hover:not([aria-pressed="true"]) { background: var(--accent-soft); }
+
+.pill { animation: pop .4s cubic-bezier(.3,1.6,.5,1) both; }
+.pill.live::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: currentColor; animation: breathe 1.8s ease-in-out infinite; vertical-align: 1px; }
+.log div { animation: slideIn .45s cubic-bezier(.2,.7,.2,1) both; }
+.msg { animation: fade .35s ease both; transition: background .3s ease; }
+.box.shake { animation: shake .5s ease; }
+.box.glow { animation: glow .8s ease-out; }
+.dots { display: inline-flex; gap: 6px; vertical-align: middle; }
+.dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--line); background: transparent; transition: background .3s ease, border-color .3s ease; }
+.dot.used { background: var(--bad); border-color: var(--bad); animation: pop .4s cubic-bezier(.3,1.6,.5,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+
+</head>
+<body>
+<main>
+  <header>
+    <h1>Cierre seguro del motor StayLiquid</h1>
+    <p class="lead">Qué pasa con una posición cuando el exchange rechaza la orden de cierre, antes y después del cambio.</p>
+  </header>
+
+  <p class="note">Esto es una simulación hecha a mano con el mismo formato de log que escribe el motor. No habla con ningún exchange y no hay dinero real. El motor tampoco se ha probado contra un exchange real.</p>
+
+  <section>
+    <h2>Qué cambia</h2>
+    <div class="compare">
+      <div class="box">
+        <h3>Antes <span class="tag bad">fallo</span></h3>
+        <ul>
+          <li>Si el exchange rechazaba el cierre, el error se ignoraba.</li>
+          <li>El motor quitaba la posición de su estado y anotaba «enviada».</li>
+          <li>La posición seguía abierta en el exchange, sin que el motor la vigilara.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>Ahora <span class="tag ok">corregido</span></h3>
+        <ul>
+          <li>La posición se queda en el motor, con su stop, hasta confirmar el cierre.</li>
+          <li>Reintenta hasta 3 veces en 2 minutos y anota cada error con su motivo.</li>
+          <li>El stop solo se cancela cuando el cierre está confirmado.</li>
+          <li>Si el exchange dice «orden duplicada», lo da por hecho y no vende dos veces.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Pruébalo tú</h2>
+    <div class="seg" role="group" aria-label="Versión del motor">
+      <button id="m-new" aria-pressed="true">Motor nuevo</button>
+      <button id="m-old" aria-pressed="false">Motor antiguo</button>
+    </div>
+    <div class="sim">
+      <div class="box">
+        <h3>Posición en el motor</h3>
+        <div id="state"></div>
+        <div class="btns">
+          <button class="btn fail" id="b-fail">Cerrar: el exchange rechaza</button>
+          <button class="btn good" id="b-ok">Cerrar: el exchange acepta</button>
+          <button class="btn good" id="b-dup">Cerrar: «orden duplicada»</button>
+          <button class="btn" id="b-reset">Reiniciar</button>
+        </div>
+        <div class="msg" id="msg"></div>
+      </div>
+      <div class="box">
+        <h3>Registro de órdenes</h3>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  var MAX = 3, ID = 'slca5c444727942cc48c9cb6fbdbf04a2';
+  var mode = 'new', st, logs, fxKind = null;
+  function dots() { var h = ''; for (var i = 0; i < MAX; i++) h += '<i class="dot' + (i < st.tries ? ' used' : '') + '"></i>'; return '<span class="dots" aria-label="' + st.tries + ' de ' + MAX + ' intentos">' + h + '</span>'; }
+  function fresh() { st = { open: true, amount: 0.01, stop: true, tries: 0, exhausted: false, lastError: null, closed: false }; logs = []; }
+  function $(id) { return document.getElementById(id); }
+  function add(cls, text) { logs.push({ cls: cls, text: text }); }
+
+  function attempt(kind) {
+    if (!st.open) return;
+    fxKind = kind === 'fail' ? 'shake' : 'glow';
+    if (mode === 'old') {
+      // comportamiento anterior: el stop se cancela primero, el error se ignora y la posición se borra
+      st.stop = false; st.open = false; st.closed = true;
+      add(kind === 'fail' ? 'e' : 's', '{"action":"close","status":"sent"}' + (kind === 'fail' ? '   ← el exchange la rechazó, pero se anotó como enviada' : ''));
+      return;
+    }
+    if (kind === 'fail') {
+      st.tries += 1; st.lastError = 'Insufficient margin';
+      st.exhausted = st.tries >= MAX;
+      add('e', '{"action":"close","status":"error","reason":"Insufficient margin","tries":' + st.tries + (st.exhausted ? ',"gaveUp":true' : '') + '}');
+      return;
+    }
+    st.open = false; st.closed = true; st.stop = false;
+    var via = kind === 'dup' ? 'duplicate' : 'order';
+    add('s', '{"action":"close","status":"sent","via":"' + via + '","stopCancelled":true}');
+  }
+
+  function pill(t, c) { return '<span class="pill ' + c + '">' + t + '</span>'; }
+  function row(a, b) { return '<div class="row"><span>' + a + '</span><b>' + b + '</b></div>'; }
+
+  function render() {
+    var s = '';
+    if (st.open) {
+      s += row('Posición', 'BTC/USDT long · ' + st.amount + ' BTC');
+      s += row('Stop en el exchange', st.stop ? pill('activo', 'ok live') : pill('cancelado', 'bad'));
+      if (mode === 'new') s += row('Reintentos', dots());
+      s += row('Estado del cierre', st.tries === 0 ? pill('sin intentar', 'warn') : (st.exhausted ? pill('reintentos agotados', 'bad') : pill('pendiente · intento ' + st.tries + ' de ' + MAX, 'warn')));
+      if (st.lastError) s += row('Último error', st.lastError);
+      s += row('Id de la orden', ID.slice(0, 12) + '…');
+    } else {
+      s += row('Posición', 'ya no está en el motor');
+      s += row('Stop en el exchange', st.stop ? pill('activo', 'ok') : pill('cancelado', 'warn'));
+    }
+    $('state').innerHTML = s;
+
+    var m = $('msg'); m.className = 'msg';
+    if (mode === 'old' && st.closed && logs.length && /rechaz/.test(logs[logs.length - 1].text)) {
+      m.classList.add('bad'); m.textContent = 'Fallo del motor antiguo: la posición desapareció del motor y el stop se canceló, pero el exchange la sigue teniendo abierta. Nadie la vigila.';
+    } else if (st.open && st.exhausted) {
+      m.classList.add('warn'); m.textContent = 'Se agotaron los 3 reintentos. La posición sigue en el motor y con su stop activo. Hace falta intervención manual.';
+    } else if (st.open && st.tries > 0) {
+      m.textContent = 'El cierre falló, pero la posición sigue en el motor con su stop activo. Se reintentará.';
+    } else if (st.closed) {
+      m.textContent = mode === 'old' ? 'Cierre anotado.' : 'Cierre confirmado: ahora sí se quita la posición y se cancela el stop.';
+    } else {
+      m.textContent = 'Elige qué responde el exchange al cierre.';
+    }
+
+    var l = $('log');
+    l.innerHTML = logs.length ? logs.map(function (x) { return '<div class="' + x.cls + '"></div>'; }).join('') : '<span class="empty">Todavía no hay órdenes. Pulsa uno de los botones.</span>';
+    Array.prototype.forEach.call(l.querySelectorAll('div'), function (d, i) { d.textContent = logs[i].text; });
+    l.scrollTop = l.scrollHeight;
+
+    var done = !st.open || (mode === 'new' && st.exhausted && false);
+    $('b-fail').disabled = !st.open; $('b-ok').disabled = !st.open; $('b-dup').disabled = !st.open;
+    if (fxKind) { var box = $('state').parentElement; box.classList.remove('shake', 'glow'); void box.offsetWidth; box.classList.add(fxKind); fxKind = null; }
+  }
+
+  function setMode(m) {
+    mode = m; fresh();
+    $('m-new').setAttribute('aria-pressed', String(m === 'new'));
+    $('m-old').setAttribute('aria-pressed', String(m === 'old'));
+    render();
+  }
+  $('m-new').onclick = function () { setMode('new'); };
+  $('m-old').onclick = function () { setMode('old'); };
+  $('b-fail').onclick = function () { attempt('fail'); render(); };
+  $('b-ok').onclick = function () { attempt('ok'); render(); };
+  $('b-dup').onclick = function () { attempt('dup'); render(); };
+  $('b-reset').onclick = function () { fresh(); render(); };
+  fresh(); render();
+})();
+</script>
+
+</body>
+</html>

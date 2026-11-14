@@ -1,7 +1,7 @@
 # StayLiquid Engine — memoria de proyecto
 
 Motor de ejecución que envía órdenes REALES de BTC en las cuentas de los clientes (ccxt). Node >=20, ESM, sin build.
-Rama de trabajo: `version-victor`. **No tocar `main`.** Tests: `npm test` (node:test, `test/*.test.js`).
+Ramas: `version-victor` (trabajo) y `main`. El dueño ordenó expresamente (2026-11-14) integrar `version-victor` en `main` (avance sin conflictos desde `2f4419d`); a partir de ahí `main` lleva el cierre seguro. No empujar a `main` sin orden expresa del dueño, y nunca con force. Tests: `npm test` (node:test, `test/*.test.js`).
 
 ## Cómo quiere el dueño que se trabaje
 - Responder en español, directo, sin rodeos. Resumen final de ~5 líneas: lo decidido, lo pendiente y qué skills/agentes se usaron DE VERDAD.

@@ -44,6 +44,8 @@ Config por cliente (`cfg`):
 `action`: `open` abre, `close` cierra. El motor procesa solo las **nuevas** (por `id`).
 
 ### Cierre seguro (`close.js`)
+Demo visual (simulación, abrir en el navegador): `docs/cierre-seguro-demo.html`.
+
 - Un fallo del exchange al cerrar **no se ignora**: la posición se queda en el estado del motor (con su stop en reposo) y se reintenta, máx. **3 intentos en 2 minutos**. Cada intento fallido se registra con `status: "error"` y el motivo (acotado a 300 caracteres). Agotados los reintentos, la posición **sigue abierta y gestionada** (`closePending` en el estado, log con `gaveUp: true`) y requiere intervención manual; una señal `close` nueva vuelve a intentarlo.
 - Cantidad redondeada a la precisión del par y mínimos respetados (`amountRules`). **Polvo**: si la cantidad es 0 o queda bajo el mínimo del par, el exchange rechazaría cualquier orden; el motor no envía nada, **libera** la posición del estado y lo registra como `status: "skipped"`, `reason: "dust_below_min:…"` (con aviso en consola).
 - Idempotente: `clientOrderId` determinista por posición (ligado a su orden de apertura) y la intención (`closePending`) se guarda **antes** de enviar. Si el exchange rechaza por duplicado se da por hecho (`via: "duplicate"` en el log).
